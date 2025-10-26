@@ -1,0 +1,1394 @@
+-- Hugo's Aimbot/Wallhacks/Fly/Speed/Noclip Script (NO USERNAME REQUIRED!)
+-- VERSION 3.1 - teleport restored, wallhack refresh + teamcheck fix + Name Tags Fixed + FOV working
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Locals
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- =====================
+-- One-Time Intro (black screen) with click-to-skip and sound fade
+-- =====================
+
+local introShown = false
+local function showIntro()
+    if introShown then return end
+    introShown = true
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "AimssistantIntroGui"
+    gui.ResetOnSpawn = false
+    gui.Parent = player:WaitForChild("PlayerGui")
+
+    local blackFrame = Instance.new("Frame")
+    blackFrame.Size = UDim2.new(1,0,1,0)
+    blackFrame.Position = UDim2.new(0,0,0,0)
+    blackFrame.BackgroundColor3 = Color3.fromRGB(0,0,0)
+    blackFrame.BackgroundTransparency = 1
+    blackFrame.Parent = gui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0,800,0,300)
+    frame.Position = UDim2.new(0.5,0,0.5,0)
+    frame.AnchorPoint = Vector2.new(0.5,0.5)
+    frame.BackgroundTransparency = 1
+    frame.Parent = gui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1,0,0.6,0)
+    title.Position = UDim2.new(0,0,0,0)
+    title.BackgroundTransparency = 1
+    title.Text = "CUSTOM WARE"
+    title.TextColor3 = Color3.fromRGB(255,0,0)
+    title.TextScaled = true
+    title.Font = Enum.Font.SourceSansBold
+    title.TextTransparency = 1
+    title.Parent = frame
+
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Size = UDim2.new(1,0,0.2,0)
+    subtitle.Position = UDim2.new(0,0,0.45,0)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "BY HUGO"
+    subtitle.TextColor3 = Color3.fromRGB(255,255,255)
+    subtitle.TextScaled = true
+    subtitle.Font = Enum.Font.SourceSans
+    subtitle.TextTransparency = 1
+    subtitle.Parent = frame
+
+    local skipLabel = Instance.new("TextLabel")
+    skipLabel.Size = UDim2.new(1,0,0.15,0)
+    skipLabel.Position = UDim2.new(0,0,0.82,0)
+    skipLabel.BackgroundTransparency = 1
+    skipLabel.Text = "(CLICK TO SKIP)"
+    skipLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    skipLabel.TextScaled = false
+    skipLabel.Font = Enum.Font.SourceSans
+    skipLabel.TextSize = 20
+    skipLabel.TextTransparency = 1
+    skipLabel.Parent = frame
+
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://131057316" -- original id preserved
+    local initialSoundVolume = 0.3
+    sound.Volume = initialSoundVolume
+    sound.Looped = false
+    sound.Parent = frame
+    pcall(function() sound:Play() end)
+
+    local skipRequested = false
+    local conn
+    conn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.Space then
+            skipRequested = true
+        end
+    end)
+
+    local fadeStep = 0.03
+    for i = 0, 1, fadeStep do
+        blackFrame.BackgroundTransparency = 1 - i
+        title.TextTransparency = 1 - i
+        subtitle.TextTransparency = 1 - i
+        skipLabel.TextTransparency = 1 - i
+        wait(fadeStep)
+    end
+
+    local holdTime = 3
+    local elapsed = 0
+    while elapsed < holdTime and not skipRequested do
+        wait(fadeStep)
+        elapsed = elapsed + fadeStep
+    end
+
+    local fadeOutSteps = math.max(1, math.floor(1/fadeStep))
+    for step = 0, fadeOutSteps do
+        local t = step / fadeOutSteps
+        blackFrame.BackgroundTransparency = t
+        title.TextTransparency = t
+        subtitle.TextTransparency = t
+        skipLabel.TextTransparency = t
+        if sound and sound.Parent then
+            sound.Volume = initialSoundVolume * (1 - t)
+            if sound.Volume < 0.001 then sound.Volume = 0 end
+        end
+        wait(fadeStep)
+    end
+
+    if conn then conn:Disconnect(); conn = nil end
+    if sound then pcall(function() sound:Stop() end); sound:Destroy() end
+    gui:Destroy()
+end
+spawn(showIntro)
+
+-- =====================
+-- State variables
+-- =====================
+
+local character
+local humanoid
+local aiming = false
+local currentTarget = nil
+local targetMonitorConn = nil
+local targetAncestryConn = nil
+local wallHackEnabled = false
+local flying = false
+local movementVector = Vector3.new(0,0,0)
+local flySpeed = 500
+local verticalSpeed = 50
+local speedHackEnabled = false
+local normalWalkSpeed = 16
+local speedHackWalkSpeed = 100
+local noclipEnabled = false
+local previousCameraCFrame = nil
+
+local teamCheckEnabled = true -- toggled by J
+local teleportEnabled = false -- toggled by T; only works while aimbot is active
+local teleportTargetPart = nil -- the part we will stick to
+
+-- Keybinds
+local aimKey = Enum.KeyCode.Z
+local wallHackKey = Enum.KeyCode.U
+local flyKey = Enum.KeyCode.P
+local speedHackKey = Enum.KeyCode.O
+local noclipKey = Enum.KeyCode.K
+local teamCheckKey = Enum.KeyCode.J
+local teleportKey = Enum.KeyCode.T
+
+local aimSmoothness = 0
+local aimFOV = 250
+local highlightOutlineColor = Color3.fromRGB(255,255,255)
+local colorChangeSpeed = 1
+local fovCircleSize = UDim2.new(0, aimFOV*2, 0, aimFOV*2)
+
+-- =====================
+-- Helper Functions
+-- =====================
+
+local function isSameTeam(p1,p2)
+    if p1 and p2 and p1.Team and p2.Team then return p1.Team == p2.Team end
+    return false
+end
+
+-- =====================
+-- Aimbot target (head only) - now respects aimFOV pixel radius around mouse
+-- =====================
+
+local function getClosestPartToMouse()
+    local closestPart = nil
+    local shortestDistance = math.huge
+    local mouse = player:GetMouse()
+    for _, otherPlayer in pairs(Players:GetPlayers()) do
+        if otherPlayer ~= player and otherPlayer.Character then
+            if teamCheckEnabled and isSameTeam(player, otherPlayer) then
+                -- skip teammates
+            else
+                local head = otherPlayer.Character:FindFirstChild("Head")
+                if head then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        local distanceFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(mouse.X, mouse.Y)).Magnitude
+                        -- Only consider targets inside the FOV radius (pixels)
+                        if distanceFromMouse <= aimFOV and distanceFromMouse < shortestDistance then
+                            shortestDistance = distanceFromMouse
+                            closestPart = head
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestPart
+end
+
+local function aimAtTarget(targetPart)
+    if targetPart then
+        local camPos = camera.CFrame.Position
+        local targetPos = targetPart.Position
+        local dir = (targetPos - camPos).unit
+        if aimSmoothness == 0 then
+            camera.CFrame = CFrame.new(camPos, targetPos)
+        else
+            camera.CFrame = camera.CFrame:Lerp(CFrame.new(camPos, camPos + dir), aimSmoothness)
+        end
+    end
+end
+
+local function startMonitoringTarget(part)
+    if targetMonitorConn then targetMonitorConn:Disconnect(); targetMonitorConn = nil end
+    if targetAncestryConn then targetAncestryConn:Disconnect(); targetAncestryConn = nil end
+    if not part or not part.Parent then return end
+    local targetHumanoid = part.Parent:FindFirstChildOfClass("Humanoid")
+    if targetHumanoid then
+        targetMonitorConn = targetHumanoid.Died:Connect(function()
+            aiming = false
+            currentTarget = nil
+            teleportEnabled = false
+            teleportTargetPart = nil
+            if targetMonitorConn then targetMonitorConn:Disconnect(); targetMonitorConn = nil end
+            if targetAncestryConn then targetAncestryConn:Disconnect(); targetAncestryConn = nil end
+        end)
+    end
+    if part.Parent then
+        targetAncestryConn = part.Parent.AncestryChanged:Connect(function(_, parent)
+            if not parent then
+                aiming = false
+                currentTarget = nil
+                teleportEnabled = false
+                teleportTargetPart = nil
+                if targetMonitorConn then targetMonitorConn:Disconnect(); targetMonitorConn = nil end
+                if targetAncestryConn then targetAncestryConn:Disconnect(); targetAncestryConn = nil end
+            end
+        end)
+    end
+end
+
+local function stopMonitoringTarget()
+    if targetMonitorConn then targetMonitorConn:Disconnect(); targetMonitorConn = nil end
+    if targetAncestryConn then targetAncestryConn:Disconnect(); targetAncestryConn = nil end
+end
+
+-- =====================
+-- Wallhack Functions
+-- =====================
+
+local function createHighlight(char, playerObj)
+    if not char then return end
+    if char:FindFirstChild("WallhackHighlight") then return end
+    -- never highlight local player's character
+    local owner = Players:GetPlayerFromCharacter(char)
+    if owner == player then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "WallhackHighlight"
+    highlight.Parent = char
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    if teamCheckEnabled then
+        if playerObj and isSameTeam(player, playerObj) then
+            highlight.FillColor = Color3.fromRGB(0,255,0)
+        else
+            highlight.FillColor = Color3.fromRGB(255,0,0)
+        end
+    else
+        highlight.FillColor = Color3.fromRGB(255,255,255) -- white when teamcheck off
+    end
+    highlight.OutlineColor = highlightOutlineColor
+    highlight.Adornee = char
+end
+
+local function removeHighlight(char)
+    if not char then return end
+    local h = char:FindFirstChild("WallhackHighlight")
+    if h then h:Destroy() end
+end
+
+local function toggleWallHacks(enabled)
+    wallHackEnabled = enabled
+    if enabled then
+        for _, other in pairs(Players:GetPlayers()) do
+            if other ~= player and other.Character then
+                removeHighlight(other.Character)
+                createHighlight(other.Character, other)
+            end
+        end
+    else
+        for _, other in pairs(Players:GetPlayers()) do
+            if other.Character then
+                removeHighlight(other.Character)
+            end
+        end
+    end
+end
+
+local function applyWallhackToExistingPlayers()
+    for _, other in pairs(Players:GetPlayers()) do
+        if other ~= player then
+            if other.Character and wallHackEnabled then
+                removeHighlight(other.Character)
+                createHighlight(other.Character, other)
+            end
+            other.CharacterAdded:Connect(function(char)
+                if wallHackEnabled and other ~= player then
+                    task.wait(0.05)
+                    removeHighlight(char)
+                    createHighlight(char, other)
+                end
+            end)
+        end
+    end
+end
+
+-- periodic refresh to ensure highlights persist
+
+task.spawn(function()
+    while true do
+        if wallHackEnabled then
+            for _, other in pairs(Players:GetPlayers()) do
+                if other ~= player and other.Character then
+                    local char = other.Character
+                    if not char:FindFirstChild("WallhackHighlight") then
+                        createHighlight(char, other)
+                    else
+                        local h = char:FindFirstChild("WallhackHighlight")
+                        if h then
+                            if teamCheckEnabled then
+                                h.FillColor = isSameTeam(player, other) and Color3.fromRGB(0,255,0) or Color3.fromRGB(255,0,0)
+                            else
+                                h.FillColor = Color3.fromRGB(255,255,255)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(3)
+    end
+end)
+
+-- =====================
+-- Fly Functions
+-- =====================
+
+local function toggleFly(enabled)
+    flying = enabled
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        if enabled then
+            if not hrp:FindFirstChild("FlyVelocity") then
+                local velocity = Instance.new("BodyVelocity")
+                velocity.Name = "FlyVelocity"
+                velocity.MaxForce = Vector3.new(1e5,1e5,1e5)
+                velocity.Velocity = Vector3.new(0,0,0)
+                velocity.Parent = hrp
+            end
+            if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
+        else
+            if hrp:FindFirstChild("FlyVelocity") then hrp.FlyVelocity:Destroy() end
+            if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Running) end
+        end
+    end
+end
+
+local function updateFlyMovement()
+    if flying and character then
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local velocity = hrp:FindFirstChild("FlyVelocity")
+            if not velocity then
+                velocity = Instance.new("BodyVelocity")
+                velocity.Name = "FlyVelocity"
+                velocity.MaxForce = Vector3.new(1e5,1e5,1e5)
+                velocity.Velocity = Vector3.new(0,0,0)
+                velocity.Parent = hrp
+            end
+            local moveDir = Vector3.new(0,0,0)
+            if movementVector.Z == -1 then moveDir += camera.CFrame.LookVector*flySpeed end
+            if movementVector.Z == 1 then moveDir -= camera.CFrame.LookVector*flySpeed end
+            if movementVector.X == -1 then moveDir -= camera.CFrame.RightVector*flySpeed end
+            if movementVector.X == 1 then moveDir += camera.CFrame.RightVector*flySpeed end
+            if movementVector.Y == 1 then moveDir += Vector3.new(0,verticalSpeed,0)
+            elseif movementVector.Y == -1 then moveDir -= Vector3.new(0,verticalSpeed,0) end
+            velocity.Velocity = moveDir
+        end
+    end
+end
+
+-- =====================
+-- Noclip
+-- =====================
+
+local function toggleNoclip(enabled)
+    if not character then return end
+    for _, part in pairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = not enabled end
+    end
+end
+
+-- =====================
+-- Movement Input (no username restriction)
+-- =====================
+
+local function onMovementInput(input)
+    if input.KeyCode == Enum.KeyCode.W then movementVector += Vector3.new(0,0,-1)
+    elseif input.KeyCode == Enum.KeyCode.S then movementVector += Vector3.new(0,0,1)
+    elseif input.KeyCode == Enum.KeyCode.A then movementVector += Vector3.new(-1,0,0)
+    elseif input.KeyCode == Enum.KeyCode.D then movementVector += Vector3.new(1,0,0)
+    elseif input.KeyCode == Enum.KeyCode.Space then movementVector += Vector3.new(0,1,0)
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then movementVector += Vector3.new(0,-1,0)
+    elseif input.KeyCode == speedHackKey then
+        speedHackEnabled = not speedHackEnabled
+        if humanoid then humanoid.WalkSpeed = speedHackEnabled and speedHackWalkSpeed or normalWalkSpeed end
+    end
+end
+
+local function onMovementInputEnd(input)
+    if input.KeyCode == Enum.KeyCode.W then movementVector -= Vector3.new(0,0,-1)
+    elseif input.KeyCode == Enum.KeyCode.S then movementVector -= Vector3.new(0,0,1)
+    elseif input.KeyCode == Enum.KeyCode.A then movementVector -= Vector3.new(-1,0,0)
+    elseif input.KeyCode == Enum.KeyCode.D then movementVector -= Vector3.new(1,0,0)
+    elseif input.KeyCode == Enum.KeyCode.Space then movementVector -= Vector3.new(0,1,0)
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then movementVector -= Vector3.new(0,-1,0)
+    end
+end
+
+-- =====================
+-- Keybinds (no username restriction)
+-- =====================
+
+local function onAimingInput(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == aimKey then
+        if not aiming then
+            previousCameraCFrame = camera.CFrame
+            currentTarget = getClosestPartToMouse()
+            if currentTarget then
+                startMonitoringTarget(currentTarget)
+                aiming = true
+            end
+        else
+            aiming = false
+            currentTarget = nil
+            teleportEnabled = false -- auto-disable teleport when aimbot turned off
+            teleportTargetPart = nil
+            stopMonitoringTarget()
+        end
+    elseif input.KeyCode == wallHackKey then
+        toggleWallHacks(not wallHackEnabled)
+    elseif input.KeyCode == flyKey then
+        toggleFly(not flying)
+    elseif input.KeyCode == noclipKey then
+        noclipEnabled = not noclipEnabled
+        toggleNoclip(noclipEnabled)
+    elseif input.KeyCode == teamCheckKey then
+        teamCheckEnabled = not teamCheckEnabled
+        if wallHackEnabled then
+            for _, other in pairs(Players:GetPlayers()) do
+                if other.Character then
+                    removeHighlight(other.Character)
+                    if other ~= player then
+                        createHighlight(other.Character, other)
+                    end
+                end
+            end
+        end
+    elseif input.KeyCode == teleportKey then
+        -- Toggle teleport only if aimbot is active and a valid target exists
+        if aiming and currentTarget and currentTarget.Parent then
+            if teleportEnabled then
+                teleportEnabled = false
+                teleportTargetPart = nil
+            else
+                teleportEnabled = true
+                teleportTargetPart = currentTarget
+            end
+        else
+            -- ensure teleport off when not aiming or target invalid
+            teleportEnabled = false
+            teleportTargetPart = nil
+        end
+    end
+end
+
+-- =====================
+-- FOV Circle (UI)
+-- =====================
+
+local fovCircleGui = Instance.new("ScreenGui")
+fovCircleGui.Name = "FOVCircleGui"
+fovCircleGui.ResetOnSpawn = false
+fovCircleGui.Parent = player:WaitForChild("PlayerGui")
+
+local fovCircle = Instance.new("Frame")
+-- size based on aimFOV pixel radius
+fovCircle.Size = UDim2.new(0, aimFOV * 2, 0, aimFOV * 2)
+fovCircle.Position = UDim2.new(0.5,0,0.5,0)
+fovCircle.AnchorPoint = Vector2.new(0.5,0.5)
+fovCircle.BackgroundTransparency = 1
+fovCircle.BorderSizePixel = 0
+fovCircle.ZIndex = 10
+fovCircle.Parent = fovCircleGui
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(255,0,0)
+stroke.Parent = fovCircle
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(1,0)
+corner.Parent = fovCircle
+
+RunService.RenderStepped:Connect(function()
+    local mouse = player:GetMouse()
+    -- center the circle on the mouse; since AnchorPoint = 0.5,0.5 we can set Position to pixel coords directly
+    fovCircle.Position = UDim2.new(0, mouse.X, 0, mouse.Y)
+    -- ensure size follows aimFOV if it changes
+    fovCircle.Size = UDim2.new(0, aimFOV * 2, 0, aimFOV * 2)
+    local hue = (tick() % colorChangeSpeed)/colorChangeSpeed
+    stroke.Color = Color3.fromHSV(hue,1,1)
+end)
+
+-- =====================
+-- Name Tags (forced for all players, persistent)
+-- =====================
+
+local function createBillboard(character, playerObj)
+    if not character or not playerObj then return end
+    local head = character:FindFirstChild("Head") or character:WaitForChild("Head",5)
+    if not head then return end
+
+    -- Remove any existing Billboard
+    local existing = character:FindFirstChild("UsernameBillboard")
+    if existing then existing:Destroy() end
+
+    -- Create new BillboardGui
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "UsernameBillboard"
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0,150,0,40)
+    billboard.StudsOffset = Vector3.new(0,2,0)
+    billboard.AlwaysOnTop = true
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1,0,1,0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    textLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    textLabel.TextStrokeTransparency = 0.8
+    textLabel.Font = Enum.Font.SourceSans
+    textLabel.TextScaled = true
+    textLabel.Parent = billboard
+    billboard.Parent = character
+
+    -- Update function
+    local function updateText()
+        if character.Parent then
+            -- DisplayName (@RealUsername)
+            textLabel.Text = ("%s (@%s)"):format(playerObj.DisplayName, playerObj.Name)
+        end
+    end
+
+    -- Initial update
+    updateText()
+
+    -- Refresh every 3 seconds
+    task.spawn(function()
+        while character.Parent do
+            updateText()
+            task.wait(3)
+        end
+    end)
+end
+
+-- Helper to force Billboard on any player character
+local function forceNameTag(playerObj)
+    if playerObj and playerObj.Character then
+        createBillboard(playerObj.Character, playerObj)
+    end
+    playerObj.CharacterAdded:Connect(function(char)
+        createBillboard(char, playerObj)
+    end)
+end
+
+-- Apply to all existing players
+for _, other in pairs(Players:GetPlayers()) do
+    if other ~= player then
+        forceNameTag(other)
+    end
+end
+
+-- Apply to any new player joining
+Players.PlayerAdded:Connect(function(other)
+    if other ~= player then
+        forceNameTag(other)
+    end
+end)
+
+-- =========================
+-- FOV Tracer
+-- =========================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local mouse = LocalPlayer:GetMouse()
+
+local aimFOV = 250
+local lines = {}
+
+-- Create line for a player
+local function createLine(player)
+    local line = Drawing.new("Line")
+    line.Thickness = 2
+    line.Visible = false
+    lines[player] = line
+end
+
+-- Add line for existing players
+for _, player in pairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        createLine(player)
+    end
+end
+
+-- Add/remove lines for players joining/leaving
+Players.PlayerAdded:Connect(function(player)
+    if player ~= LocalPlayer then createLine(player) end
+end)
+Players.PlayerRemoving:Connect(function(player)
+    if lines[player] then
+        lines[player]:Remove()
+        lines[player] = nil
+    end
+end)
+
+-- Find closest player to mouse inside FOV
+local function getClosestPlayerInFOV()
+    local closest = nil
+    local shortestDist = math.huge
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local head = player.Character:FindFirstChild("Head")
+            if head then
+                local screenPos, onScreen = camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(mouse.X, mouse.Y)).Magnitude
+                    if dist <= aimFOV and dist < shortestDist then
+                        shortestDist = dist
+                        closest = player
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Update line ESP every frame
+RunService.RenderStepped:Connect(function()
+    local hue = (tick() % 1) -- sync with your FOV RGB loop
+    local color = Color3.fromHSV(hue, 1, 1)
+
+    local target = getClosestPlayerInFOV()
+
+    local yOffset = 60 -- moves the line start a bit below the mouse
+
+    for player, line in pairs(lines) do
+        if player == target and player.Character and player.Character:FindFirstChild("Head") then
+            local head = player.Character.Head
+            local screenPos, onScreen = camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                line.From = Vector2.new(mouse.X, mouse.Y + yOffset) -- added offset here
+                line.To = Vector2.new(screenPos.X, screenPos.Y)
+                line.Color = color
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        else
+            line.Visible = false
+        end
+    end
+end)
+
+-- =====================
+-- Main RenderStepped
+-- =====================
+
+RunService.RenderStepped:Connect(function()
+    -- Aimbot behavior
+    if aiming then
+        -- if we lost currentTarget, try to reacquire
+        if not currentTarget or not currentTarget.Parent then
+            currentTarget = getClosestPartToMouse()
+            if currentTarget then startMonitoringTarget(currentTarget) end
+        end
+        if currentTarget then
+            aimAtTarget(currentTarget)
+        end
+    end
+
+    -- Fly movement
+    updateFlyMovement()
+
+    -- Teleport sticking behavior (only when teleportEnabled and teleportTargetPart valid)
+    if teleportEnabled and teleportTargetPart and teleportTargetPart.Parent and character and character:FindFirstChild("HumanoidRootPart") then
+        local hrp = character.HumanoidRootPart
+        -- position slightly above the head (2.2 studs up)
+        local targetPos = teleportTargetPart.Position + Vector3.new(0, 2.2, 0)
+        -- maintain position each frame (instant stick)
+        hrp.CFrame = CFrame.new(targetPos)
+    end
+end)
+
+-- =====================
+-- Input Connections
+-- =====================
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    -- movement and key toggles
+    onMovementInput(input)
+    onAimingInput(input, gameProcessed)
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    onMovementInputEnd(input)
+end)
+
+-- =====================
+-- Character Initialization & Respawn Handling
+-- =====================
+
+local function onCharacterAdded(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    humanoid.WalkSpeed = normalWalkSpeed
+    -- apply wallhack to this new character if enabled and not local
+    if wallHackEnabled then
+        task.delay(0.05, function()
+            if char and char.Parent and Players:GetPlayerFromCharacter(char) ~= player then
+                removeHighlight(char)
+                createHighlight(char, Players:GetPlayerFromCharacter(char))
+            end
+        end)
+    end
+end
+
+if player.Character then
+    onCharacterAdded(player.Character)
+else
+    player.CharacterAdded:Wait()
+    onCharacterAdded(player.Character)
+end
+player.CharacterAdded:Connect(onCharacterAdded)
+
+-- apply initial wallhacks (if script toggles it later, use the U key)
+applyWallhackToExistingPlayers()
+
+-- ---------------------------
+-- RGB Crosshair
+-- ---------------------------
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+-- Function to grab Aim frames
+local function getAimFrames()
+    local mainScreen = player:WaitForChild("PlayerGui"):WaitForChild("Main Screen", 5)
+    if not mainScreen then return {} end
+    local aimFrame = mainScreen:FindFirstChild("Aim")
+    if not aimFrame then return {} end
+
+    local frames = {aimFrame}
+    local childNames = {"Bottom", "Left", "Right", "Top"}
+    for _, name in ipairs(childNames) do
+        local child = aimFrame:FindFirstChild(name)
+        if child and child:IsA("Frame") then
+            table.insert(frames, child)
+        end
+    end
+    return frames
+end
+
+local aimFrames = getAimFrames()
+
+-- Update Aim frames color in sync with Hugo's FOV circle
+RunService.RenderStepped:Connect(function()
+    local hue = (tick() % 1) / 1 -- same as Hugo’s colorChangeSpeed = 1
+    local color = Color3.fromHSV(hue, 1, 1)
+
+    -- refresh frames in case GUI reloads or after respawn
+    if not aimFrames or #aimFrames == 0 then
+        aimFrames = getAimFrames()
+    end
+
+    for _, frame in ipairs(aimFrames) do
+        frame.BackgroundColor3 = color
+    end
+end)
+
+-- Refresh Aim frames when player respawns
+player.CharacterAdded:Connect(function()
+    task.delay(0.5, function()  -- small delay to let PlayerGui reload
+        aimFrames = getAimFrames()
+    end)
+end)
+
+-- ---------------------------
+-- Lighting Color Themes
+-- ---------------------------
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local player = Players.LocalPlayer
+
+-- Colors
+local PLAYER_COLOR = Color3.fromRGB(200, 200, 200)
+local GUN_COLOR = Color3.fromRGB(200, 0, 0)
+local MAP_BRIGHTNESS = 0.2
+
+-- Tools
+local REMOVE_TEXTURE_TOOLS = { "[Revolver]", "[DoubleBarrel]", "[TacticalShotgun]", "[Knife]" }
+local SHOOT_SFX_TOOLS = { "[Revolver]", "[DoubleBarrel]", "[TacticalShotgun]" }
+local NEON_GUNS = { "[Revolver]", "[DoubleBarrel]", "[TacticalShotgun]", "[Knife]" }
+
+local gunHandles = {} -- cache handles for continuous color refresh
+
+-- ---------------------------
+-- Lighting / ColorCorrection
+-- ---------------------------
+
+local function applyColorCorrection()
+    local cc = Lighting:FindFirstChild("ColorCorrection")
+    if not cc then
+        cc = Instance.new("ColorCorrectionEffect")
+        cc.Name = "ColorCorrection"
+        cc.Parent = Lighting
+    end
+    cc.Brightness = 0.1
+    cc.Contrast = 0.1
+    cc.Saturation = 0.5
+    cc.TintColor = Color3.fromRGB(170, 85, 255)
+end
+
+local function applyLighting()
+    Lighting.Ambient = Color3.new(MAP_BRIGHTNESS, MAP_BRIGHTNESS, MAP_BRIGHTNESS)
+    Lighting.OutdoorAmbient = Color3.new(MAP_BRIGHTNESS, MAP_BRIGHTNESS, MAP_BRIGHTNESS)
+end
+
+-- ---------------------------
+-- Skybox
+-- ---------------------------
+
+local function applyLockedSkybox()
+    for _, obj in ipairs(Lighting:GetChildren()) do
+        if obj:IsA("Sky") then obj:Destroy() end
+    end
+    local sky = Instance.new("Sky")
+    sky.Name = "CustomSky"
+    sky.Parent = Lighting
+    sky.SkyboxBk = "rbxassetid://12635309703"
+    sky.SkyboxDn = "rbxassetid://12635311686"
+    sky.SkyboxFt = "rbxassetid://12635312870"
+    sky.SkyboxLf = "rbxassetid://12635313718"
+    sky.SkyboxRt = "rbxassetid://12635315817"
+    sky.SkyboxUp = "rbxassetid://12635316856"
+end
+
+-- ---------------------------
+-- Gun initialization
+-- ---------------------------
+
+local function setupTool(tool)
+    if not tool:IsA("Tool") then return end
+    local handle = tool:FindFirstChild("Handle")
+    if not handle or not handle:IsA("MeshPart") then return end
+
+    -- Remove texture once
+    if table.find(REMOVE_TEXTURE_TOOLS, tool.Name) then
+        handle.TextureID = ""
+    end
+
+    -- Apply Neon/Material once
+    if table.find(NEON_GUNS, tool.Name) then
+        handle.Material = Enum.Material.Neon
+        handle.Reflectance = 0.3
+        gunHandles[handle] = true
+    end
+
+    -- Setup Shoot sound asynchronously
+    task.spawn(function()
+        local shoot = handle:WaitForChild("Shoot", 2)
+        if shoot and shoot:IsA("Sound") then
+            if tool.Name == "[Revolver]" then
+                shoot.SoundId = "rbxassetid://1884211021"
+            elseif tool.Name == "[DoubleBarrel]" or tool.Name == "[TacticalShotgun]" then
+                shoot.SoundId = "rbxassetid://1231327271"
+            end
+        end
+    end)
+end
+
+local function applyAllLocalTools()
+    for _, tool in ipairs(player.Backpack:GetChildren()) do setupTool(tool) end
+    if player.Character then
+        for _, tool in ipairs(player.Character:GetChildren()) do setupTool(tool) end
+    end
+end
+
+player.Backpack.ChildAdded:Connect(setupTool)
+player.CharacterAdded:Connect(function(char)
+    char.ChildAdded:Connect(setupTool)
+end)
+
+-- ---------------------------
+-- ReplicatedStorage HitSound
+-- ---------------------------
+
+local function applyHitSound()
+    local hitsound = ReplicatedStorage:FindFirstChild("HitSound") or ReplicatedStorage:WaitForChild("HitSound", 2)
+    if hitsound and hitsound:IsA("Sound") then
+        hitsound.SoundId = "rbxassetid://1841250414"
+    end
+end
+
+-- ---------------------------
+-- Player glow
+-- ---------------------------
+
+local function applyPlayerGlow()
+    if not player.Character then return end
+    local char = player.Character
+
+    -- Remove clothes
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
+            item:Destroy()
+        end
+    end
+
+    -- Head transparent + remove face decal
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        head.Transparency = 1
+        local face = head:FindFirstChild("face")
+        if face then face:Destroy() end
+    end
+
+    -- Glow body and accessories (skip tools)
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and not part:IsDescendantOf(player.Backpack) and not gunHandles[part] then
+            part.Material = Enum.Material.Neon
+            part.Color = PLAYER_COLOR
+            part.Reflectance = 0.2
+            if part:IsA("MeshPart") then part.TextureID = "" end
+        end
+        if part:IsA("Accessory") or part:IsA("Hat") then
+            local handle = part:FindFirstChild("Handle")
+            if handle and handle:IsA("MeshPart") then
+                handle.Material = Enum.Material.Neon
+                handle.Color = PLAYER_COLOR
+                handle.Reflectance = 0.2
+                handle.TextureID = ""
+            end
+        end
+    end
+end
+
+-- ---------------------------
+-- Initial application
+-- ---------------------------
+
+applyColorCorrection()
+applyLighting()
+applyLockedSkybox()
+applyAllLocalTools()
+applyPlayerGlow()
+applyHitSound()
+
+-- ---------------------------
+-- Continuous refresh loop (gun colors + player glow + hitsound)
+-- ---------------------------
+
+task.spawn(function()
+    while true do
+        -- Refresh gun colors
+        for handle,_ in pairs(gunHandles) do
+            if handle and handle.Parent then
+                handle.Color = GUN_COLOR
+            end
+        end
+
+        applyPlayerGlow() -- refresh player
+        applyHitSound()   -- refresh hitsound
+        task.wait(0) -- every frame
+    end
+end)
+
+-- ---------------------------
+-- Soft Aim
+-- ---------------------------
+
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local AIM_RADIUS = 250
+local AIM_SPEED_H = 2
+local AIM_SPEED_V = 0
+
+local aimAssistEnabled = false
+local aiming = false
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if not gameProcessed then
+		if input.KeyCode == Enum.KeyCode.L then
+			aimAssistEnabled = not aimAssistEnabled
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			aiming = true
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		aiming = false
+	end
+end)
+
+local function clamp(x, a, b)
+	if x < a then return a end
+	if x > b then return b end
+	return x
+end
+
+local function wrapAngle(delta)
+	local twoPi = math.pi * 2
+	delta = (delta + math.pi) % twoPi
+	if delta < 0 then delta = delta + twoPi end
+	return delta - math.pi
+end
+
+local function lerpAngle(a, b, t)
+	local diff = wrapAngle(b - a)
+	return a + diff * t
+end
+
+local function vectorToYawPitch(v)
+	local yaw = math.atan2(v.X, v.Z)
+	local pitch = math.atan2(v.Y, math.sqrt(v.X * v.X + v.Z * v.Z))
+	return yaw, pitch
+end
+
+local function yawPitchToVector(yaw, pitch)
+	local cp = math.cos(pitch)
+	local x = math.sin(yaw) * cp
+	local z = math.cos(yaw) * cp
+	local y = math.sin(pitch)
+	return Vector3.new(x, y, z)
+end
+
+local function hasLineOfSight(part)
+	if not part or not part.Parent then return false end
+	local origin = Camera.CFrame.Position
+	local direction = part.Position - origin
+	local params = RaycastParams.new()
+	if LocalPlayer.Character then
+		params.FilterDescendantsInstances = {LocalPlayer.Character}
+	end
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.IgnoreWater = true
+	local result = workspace:Raycast(origin, direction, params)
+	if result then
+		return result.Instance:IsDescendantOf(part.Parent)
+	end
+	return true
+end
+
+local validStates = {
+	[Enum.HumanoidStateType.Running] = true,
+	[Enum.HumanoidStateType.RunningNoPhysics] = true,
+	[Enum.HumanoidStateType.Freefall] = true,
+	[Enum.HumanoidStateType.Jumping] = true,
+	[Enum.HumanoidStateType.GettingUp] = true,
+}
+
+local function getClosestVisibleHead()
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	local closestHead, closestDist = nil, AIM_RADIUS
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character then
+			local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+			local head = player.Character:FindFirstChild("Head")
+			if humanoid and head and validStates[humanoid:GetState()] then
+				local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+				if onScreen then
+					local dist = (screenCenter - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+					if dist < closestDist and hasLineOfSight(head) then
+						closestDist = dist
+						closestHead = head
+					end
+				end
+			end
+		end
+	end
+	return closestHead
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	if not aimAssistEnabled then return end
+	if not aiming then return end
+	if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")) then return end
+
+	local targetHead = getClosestVisibleHead()
+	if not targetHead then return end
+
+	local camPos = Camera.CFrame.Position
+	local desiredLook = (targetHead.Position - camPos)
+	if desiredLook.Magnitude == 0 then return end
+	desiredLook = desiredLook.Unit
+
+	local currentLook = Camera.CFrame.LookVector
+	if currentLook.Magnitude == 0 then return end
+	currentLook = currentLook.Unit
+
+	local currYaw, currPitch = vectorToYawPitch(currentLook)
+	local desYaw, desPitch = vectorToYawPitch(desiredLook)
+
+	local tYaw = clamp(dt * AIM_SPEED_H, 0, 1)
+	local tPitch = clamp(dt * AIM_SPEED_V, 0, 1)
+
+	local newYaw = lerpAngle(currYaw, desYaw, tYaw)
+	local newPitch = lerpAngle(currPitch, desPitch, tPitch)
+
+	local finalLook = yawPitchToVector(newYaw, newPitch).Unit
+	Camera.CFrame = CFrame.new(camPos, camPos + finalLook)
+end)
+
+-- ---------------------------
+-- Always Day
+-- ---------------------------
+
+local Lighting = game:GetService("Lighting")
+
+-- Desired daytime settings
+local DAY_TIME = 12 -- 12 PM
+local AMBIENT_COLOR = Color3.fromRGB(255, 255, 255)
+local OUTDOOR_AMBIENT = Color3.fromRGB(200, 200, 200)
+local BRIGHTNESS = 2
+
+-- Function to enforce daytime continuously
+local function enforceDay()
+    Lighting.ClockTime = DAY_TIME
+    Lighting.Ambient = AMBIENT_COLOR
+    Lighting.OutdoorAmbient = OUTDOOR_AMBIENT
+    Lighting.Brightness = BRIGHTNESS
+end
+
+-- Disable any Lighting property changes from other scripts
+Lighting:GetPropertyChangedSignal("ClockTime"):Connect(enforceDay)
+Lighting:GetPropertyChangedSignal("Ambient"):Connect(enforceDay)
+Lighting:GetPropertyChangedSignal("OutdoorAmbient"):Connect(enforceDay)
+Lighting:GetPropertyChangedSignal("Brightness"):Connect(enforceDay)
+
+-- Initial enforcement
+enforceDay()
+
+-- Optional: Keep enforcing every frame to be extra safe
+game:GetService("RunService").Stepped:Connect(enforceDay)
+
+-- ---------------------------
+-- TP Walk
+-- ---------------------------
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+
+local tpWalkEnabled = false
+local tpSpeed = 200 -- how fast the player moves
+local airControl = 1 -- how strong midair control is (1 = full control)
+
+local character, humanoid, root
+
+-- Function to update character references
+local function setupCharacter(char)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	root = char:WaitForChild("HumanoidRootPart")
+end
+
+-- Initial setup
+if player.Character then
+	setupCharacter(player.Character)
+end
+player.CharacterAdded:Connect(setupCharacter)
+
+-- Toggle TPWalk with M
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.M then
+		tpWalkEnabled = not tpWalkEnabled
+		if tpWalkEnabled then
+			print("TPWalk ON")
+		else
+			print("TPWalk OFF")
+		end
+	end
+end)
+
+-- Movement loop
+RunService.RenderStepped:Connect(function(dt)
+	if not tpWalkEnabled then return end
+	if not character or not root or not humanoid then return end
+
+	local moveDir = humanoid.MoveDirection
+	if moveDir.Magnitude > 0 then
+		-- move normally, but way faster
+		root.AssemblyLinearVelocity = (moveDir * tpSpeed) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+	else
+		-- keep vertical velocity (so gravity & jumping still work)
+		root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+	end
+
+	-- midair control boost
+	if not humanoid.FloorMaterial and moveDir.Magnitude > 0 then
+		root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + (moveDir * tpSpeed * dt * airControl)
+	end
+end)
+
+-- =========================
+--  Toggle Notifications
+-- =========================
+
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- Notification helper
+local function notify(text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "Toggle Status",
+            Text = text,
+            Duration = 2
+        })
+    end)
+end
+
+-- Map keys to human-readable names
+local toggleNames = {
+    [Enum.KeyCode.U] = "Wallhack",
+    [Enum.KeyCode.P] = "Fly",
+    [Enum.KeyCode.K] = "Noclip",
+    [Enum.KeyCode.J] = "Team Check",
+    [Enum.KeyCode.T] = "Teleport",
+    [Enum.KeyCode.O] = "Speed Hack",
+    [Enum.KeyCode.L] = "Soft Aim",
+    [Enum.KeyCode.M] = "TP Walk",
+}
+
+-- Track toggle states manually
+local toggleStates = {}
+
+for key, name in pairs(toggleNames) do
+    toggleStates[name] = false
+end
+
+-- Hook key presses to update state and notify
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    local name = toggleNames[input.KeyCode]
+    if name then
+        -- flip the state manually
+        toggleStates[name] = not toggleStates[name]
+
+        -- For aimbot specifically, include the targeted player's name
+        if name == "Soft Aim" and toggleStates[name] and currentTarget and currentTarget.Parent then
+            local targetPlayer = Players:GetPlayerFromCharacter(currentTarget.Parent)
+            if targetPlayer then
+                notify(name .. " ON - Target: " .. targetPlayer.Name)
+                return
+            end
+        end
+
+        -- Otherwise just notify ON/OFF
+        notify(name .. ": " .. (toggleStates[name] and "ON" or "OFF"))
+    end
+end)
+
+-- =========================
+-- Aimbot Toggle Notification
+-- =========================
+
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- Helper to send notification
+local function notify(text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "Toggle Status",
+            Text = text,
+            Duration = 2
+        })
+    end)
+end
+
+-- Track previous aimbot state and last target
+local prevAiming = false
+local lastTargetName = nil
+
+-- Hook Z key (aimbot toggle)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Z then
+        task.defer(function()
+            local targetName = nil
+            if currentTarget and currentTarget.Parent then
+                local targetPlayer = Players:GetPlayerFromCharacter(currentTarget.Parent)
+                if targetPlayer then
+                    targetName = targetPlayer.Name
+                    lastTargetName = targetName -- remember this target
+                end
+            end
+
+            -- Only notify if we have a remembered target
+            if lastTargetName then
+                prevAiming = not prevAiming
+                notify("Aimbot " .. (prevAiming and "ON" or "OFF") .. " - Target: " .. lastTargetName)
+
+                -- Clear lastTargetName if turning off
+                if not prevAiming then
+                    lastTargetName = nil
+                end
+            end
+        end)
+    end
+end)
+
+-- =========================
+-- Spinning Crosshair
+-- =========================
+
+local player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+local rotationSpeed = 180 -- degrees per second
+local aimFrame
+
+local function getAimFrame()
+    local gui = player:WaitForChild("PlayerGui")
+    local mainScreen = gui:WaitForChild("Main Screen")
+    return mainScreen:WaitForChild("Aim")
+end
+
+-- Always ensure we have a valid Aim frame
+aimFrame = getAimFrame()
+
+-- Spin loop
+RunService.RenderStepped:Connect(function(deltaTime)
+    if not aimFrame or not aimFrame.Parent then
+        aimFrame = getAimFrame()
+    end
+
+    aimFrame.Rotation = aimFrame.Rotation + rotationSpeed * deltaTime
+    if aimFrame.Rotation >= 360 then
+        aimFrame.Rotation = aimFrame.Rotation - 360
+    end
+end)
