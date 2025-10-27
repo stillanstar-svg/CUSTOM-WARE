@@ -1,5 +1,5 @@
 -- Hugo's Aimbot/Wallhacks/Fly/Speed/Noclip Script (NO USERNAME REQUIRED!)
--- VERSION 3.1 - teleport restored, wallhack refresh + teamcheck fix + Name Tags Fixed + FOV working
+-- VERSION 3.2 - teleport restored, wallhack refresh + teamcheck fix + Name Tags Fixed + FOV working
 
 -- Services
 local Players = game:GetService("Players")
@@ -548,14 +548,14 @@ local function createBillboard(character, playerObj)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "UsernameBillboard"
     billboard.Adornee = head
-    billboard.Size = UDim2.new(0,150,0,40)
-    billboard.StudsOffset = Vector3.new(0,2,0)
+    billboard.Size = UDim2.new(0,0,0,0) -- 0,60,0,30 if u want name tags to show
+    billboard.StudsOffset = Vector3.new(0,-8,0)
     billboard.AlwaysOnTop = true
 
     local textLabel = Instance.new("TextLabel")
     textLabel.Size = UDim2.new(1,0,1,0)
     textLabel.BackgroundTransparency = 1
-    textLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    textLabel.TextColor3 = Color3.fromRGB(255,0,0)
     textLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     textLabel.TextStrokeTransparency = 0.8
     textLabel.Font = Enum.Font.SourceSans
@@ -1023,9 +1023,9 @@ local UserInputService = game:GetService("UserInputService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
-local AIM_RADIUS = 250
-local AIM_SPEED_H = 2
-local AIM_SPEED_V = 0
+local AIM_RADIUS = 100
+local AIM_SPEED_H = 10
+local AIM_SPEED_V = 10
 
 local aimAssistEnabled = false
 local aiming = false
@@ -1392,3 +1392,26 @@ RunService.RenderStepped:Connect(function(deltaTime)
         aimFrame.Rotation = aimFrame.Rotation - 360
     end
 end)
+
+-- =========================
+-- Credits
+-- =========================
+
+local player = game.Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "CustomWareLabel"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local label = Instance.new("TextLabel")
+label.Parent = gui
+label.Text = "CUSTOM WARE MADE BY HUGO/@SSCR1PTED V3.2"
+label.Font = Enum.Font.Montserrat -- clean modern font
+label.TextSize = 14
+label.TextColor3 = Color3.fromRGB(200, 200, 200)
+label.BackgroundTransparency = 1
+label.AnchorPoint = Vector2.new(0, 1)
+label.Position = UDim2.new(0, 10, 1, -10) -- left corner
+label.TextXAlignment = Enum.TextXAlignment.Left
+label.TextYAlignment = Enum.TextYAlignment.Bottom
+label.ZIndex = 10
