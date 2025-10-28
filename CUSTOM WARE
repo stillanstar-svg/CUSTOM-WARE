@@ -531,6 +531,31 @@ RunService.RenderStepped:Connect(function()
     stroke.Color = Color3.fromHSV(hue,1,1)
 end)
 
+-- =========================
+-- Credits
+-- =========================
+
+local player = game.Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "CustomWareLabel"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local label = Instance.new("TextLabel")
+label.Parent = gui
+label.Text = "CUSTOM WARE MADE BY HUGO/@SSCR1PTED V3.2"
+label.Font = Enum.Font.Montserrat -- clean modern font
+label.TextSize = 25
+label.TextColor3 = Color3.fromRGB(200, 200, 200)
+label.BackgroundTransparency = 1
+label.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+label.TextStrokeTransparency = 0
+label.AnchorPoint = Vector2.new(0, 1)
+label.Position = UDim2.new(0, 10, 1, -10) -- left corner
+label.TextXAlignment = Enum.TextXAlignment.Left
+label.TextYAlignment = Enum.TextYAlignment.Bottom
+label.ZIndex = 10
+
 -- =====================
 -- Name Tags (forced for all players, persistent)
 -- =====================
@@ -1392,26 +1417,3 @@ RunService.RenderStepped:Connect(function(deltaTime)
         aimFrame.Rotation = aimFrame.Rotation - 360
     end
 end)
-
--- =========================
--- Credits
--- =========================
-
-local player = game.Players.LocalPlayer
-local gui = Instance.new("ScreenGui")
-gui.Name = "CustomWareLabel"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-
-local label = Instance.new("TextLabel")
-label.Parent = gui
-label.Text = "CUSTOM WARE MADE BY HUGO/@SSCR1PTED V3.2"
-label.Font = Enum.Font.Montserrat -- clean modern font
-label.TextSize = 14
-label.TextColor3 = Color3.fromRGB(200, 200, 200)
-label.BackgroundTransparency = 1
-label.AnchorPoint = Vector2.new(0, 1)
-label.Position = UDim2.new(0, 10, 1, -10) -- left corner
-label.TextXAlignment = Enum.TextXAlignment.Left
-label.TextYAlignment = Enum.TextYAlignment.Bottom
-label.ZIndex = 10
