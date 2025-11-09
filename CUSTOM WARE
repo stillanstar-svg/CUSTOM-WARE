@@ -198,7 +198,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 	if gp then return end
 	if input.KeyCode == Enum.KeyCode.N then
 		autoShootEnabled = not autoShootEnabled
-		notify("AutoShoot: " .. (autoShootEnabled and "ON" or "OFF"))
+		notify("TriggerBot: " .. (autoShootEnabled and "ON" or "OFF"))
 	end
 end)
 
