@@ -1,6 +1,239 @@
 -- Hugo's Aimbot/Wallhacks/Fly/Speed/Noclip Script (NO USERNAME REQUIRED!)
 -- VERSION 3.2 - teleport restored, wallhack refresh + teamcheck fix + Name Tags Fixed + FOV working
 
+-- =========================
+-- Trigger Bot
+-- =========================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+local function notify(text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = "Toggle Status",
+			Text = text,
+			Duration = 2
+		})
+	end)
+end
+
+local IGNORE_TEAMMATES = false
+local AUTO_TOOLS = {
+	["[Revolver]"] = true,
+	["[Double-Barrel SG]"] = true,
+	["[DoubleBarrel]"] = true,
+	["[TacticalShotgun]"] = true,
+	["[SMG]"] = true,
+}
+
+local autoShootEnabled = false
+local leftHeld = false
+local mouseCurrentlyDown = false
+local holdStartTime = 0
+local holdThreshold = 0.15
+local lastTarget
+local canShoot = true
+
+local shotDelays = {0}
+
+local function getEquippedTool()
+	local char = player.Character
+	if char then
+		for _, tool in ipairs(char:GetChildren()) do
+			if tool:IsA("Tool") then
+				return tool
+			end
+		end
+	end
+	return nil
+end
+
+local function isFriendly(targetPlayer)
+	if not targetPlayer then return false end
+	if targetPlayer == player then return true end
+	if IGNORE_TEAMMATES and player.Team and targetPlayer.Team and player.Team == targetPlayer.Team then
+		return true
+	end
+	return false
+end
+
+local function attemptLocalFire()
+	local tool = getEquippedTool()
+	if tool and AUTO_TOOLS[tool.Name] and canShoot then
+		canShoot = false
+		pcall(function()
+			tool:Activate()
+		end)
+		local delayTime = shotDelays[math.random(1, #shotDelays)]
+		task.delay(delayTime, function()
+			canShoot = true
+		end)
+		return true
+	end
+	return false
+end
+
+local function isRagdolled(model)
+	if not model or not model:IsA("Model") then return true end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return true end
+	if humanoid.Health <= 0 then return true end
+	local ok, state = pcall(function() return humanoid:GetState() end)
+	if ok and (state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.FallingDown) then
+		return true
+	end
+	if humanoid.PlatformStand == true then return true end
+	local possibleFlagNames = {"Ragdolled","Ragdoll","IsRagdolled","RagdollFlag","RagdollState"}
+	for _, name in ipairs(possibleFlagNames) do
+		local v = model:FindFirstChild(name)
+		if v then
+			if v:IsA("BoolValue") and v.Value == true then
+				return true
+			elseif v:IsA("StringValue") and (v.Value == "true" or v.Value == "ragdolled") then
+				return true
+			end
+		end
+	end
+	local foundMotor6D = false
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("Motor6D") then
+			foundMotor6D = true
+			break
+		end
+	end
+	if not foundMotor6D then
+		return true
+	end
+	return false
+end
+
+local function isValidTarget(instance)
+	if not instance then return false end
+	local model = instance:FindFirstAncestorOfClass("Model")
+	if not model then return false end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+	local targetPlayer = Players:GetPlayerFromCharacter(model)
+	if not targetPlayer or isFriendly(targetPlayer) then return false end
+	if isRagdolled(model) then return false end
+	return true
+end
+
+local function handleMouseMovement()
+	if not autoShootEnabled or not leftHeld then return end
+	local tool = getEquippedTool()
+	if not tool or not AUTO_TOOLS[tool.Name] then
+		leftHeld = false
+		lastTarget = nil
+		return
+	end
+	local origin = workspace.CurrentCamera.CFrame.Position
+	local direction = (mouse.Hit.Position - origin).Unit * 1000
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.FilterDescendantsInstances = { player.Character }
+	local result = workspace:Raycast(origin, direction, params)
+	if result and isValidTarget(result.Instance) then
+		local distance = (result.Position - origin).Magnitude
+		if tool.Name == "[Revolver]" and distance > 200 then
+			lastTarget = nil
+			return
+		elseif (tool.Name == "[Double-Barrel SG]" or tool.Name == "[TacticalShotgun]" or tool.Name == "[DoubleBarrel]") and distance > 75 then
+			lastTarget = nil
+			return
+		end
+		if result.Instance ~= lastTarget then
+			lastTarget = result.Instance
+			attemptLocalFire()
+		elseif canShoot then
+			attemptLocalFire()
+		end
+	else
+		lastTarget = nil
+	end
+end
+
+local function blockLeftClick(actionName, inputState)
+	local tool = getEquippedTool()
+	if tool and AUTO_TOOLS[tool.Name] and autoShootEnabled then
+		if inputState == Enum.UserInputState.Begin then
+			leftHeld = true
+			mouseCurrentlyDown = true
+			holdStartTime = tick()
+			task.spawn(function()
+				while leftHeld and autoShootEnabled do
+					handleMouseMovement()
+					task.wait(0.05)
+				end
+			end)
+		elseif inputState == Enum.UserInputState.End then
+			mouseCurrentlyDown = false
+			local heldTime = tick() - holdStartTime
+			if heldTime < holdThreshold then
+				attemptLocalFire()
+			end
+			leftHeld = false
+		end
+		return Enum.ContextActionResult.Sink
+	end
+	return Enum.ContextActionResult.Pass
+end
+
+ContextActionService:BindAction("BlockMouseClick", blockLeftClick, false, Enum.UserInputType.MouseButton1)
+
+UserInputService.InputChanged:Connect(function(input, gp)
+	if gp then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		handleMouseMovement()
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.N then
+		autoShootEnabled = not autoShootEnabled
+		notify("AutoShoot: " .. (autoShootEnabled and "ON" or "OFF"))
+	end
+end)
+
+local function setupCharacter(char)
+	char.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			lastTarget = nil
+			canShoot = true
+			task.delay(0.1, function()
+				if not getEquippedTool() then
+					leftHeld = false
+					mouseCurrentlyDown = false
+				end
+			end)
+		end
+	end)
+	char.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") and AUTO_TOOLS[child.Name] then
+			if mouseCurrentlyDown then
+				leftHeld = true
+				handleMouseMovement()
+			end
+		end
+	end)
+end
+
+player.CharacterAdded:Connect(setupCharacter)
+if player.Character then
+	setupCharacter(player.Character)
+end
+
+-- =========================
+-- Not Important lol
+-- =========================
+
 -- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -543,7 +776,7 @@ gui.Parent = player:WaitForChild("PlayerGui")
 
 local label = Instance.new("TextLabel")
 label.Parent = gui
-label.Text = "CUSTOM WARE MADE BY HUGO/@SSCR1PTED V3.2"
+label.Text = "CUSTOM WARE MADE BY HUGO/@SSCR1PTED V3.3"
 label.Font = Enum.Font.Montserrat -- clean modern font
 label.TextSize = 25
 label.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -629,6 +862,190 @@ end
 Players.PlayerAdded:Connect(function(other)
     if other ~= player then
         forceNameTag(other)
+    end
+end)
+
+-- =========================
+-- Skeleton ESP
+-- =========================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+
+local Skeletons = {}
+local function getColor()
+    local t = tick()
+    return Color3.fromHSV(t % 5 / 5, 1, 1) -- rainbow over time
+end
+
+local function createLine()
+    local line = Drawing.new("Line")
+    line.Thickness = 2
+    line.Color = Color3.new(1,1,1)
+    line.Visible = true
+    return line
+end
+
+local function getR15Joints(character)
+    return {
+        Head = character:FindFirstChild("Head"),
+        UpperTorso = character:FindFirstChild("UpperTorso"),
+        LowerTorso = character:FindFirstChild("LowerTorso"),
+        LeftUpperArm = character:FindFirstChild("LeftUpperArm"),
+        LeftLowerArm = character:FindFirstChild("LeftLowerArm"),
+        LeftHand = character:FindFirstChild("LeftHand"),
+        RightUpperArm = character:FindFirstChild("RightUpperArm"),
+        RightLowerArm = character:FindFirstChild("RightLowerArm"),
+        RightHand = character:FindFirstChild("RightHand"),
+        LeftUpperLeg = character:FindFirstChild("LeftUpperLeg"),
+        LeftLowerLeg = character:FindFirstChild("LeftLowerLeg"),
+        LeftFoot = character:FindFirstChild("LeftFoot"),
+        RightUpperLeg = character:FindFirstChild("RightUpperLeg"),
+        RightLowerLeg = character:FindFirstChild("RightLowerLeg"),
+        RightFoot = character:FindFirstChild("RightFoot"),
+    }
+end
+
+local function getR6Joints(character)
+    return {
+        Head = character:FindFirstChild("Head"),
+        Torso = character:FindFirstChild("Torso"),
+        LeftArm = character:FindFirstChild("Left Arm"),
+        RightArm = character:FindFirstChild("Right Arm"),
+        LeftLeg = character:FindFirstChild("Left Leg"),
+        RightLeg = character:FindFirstChild("Right Leg"),
+    }
+end
+
+local function createSkeleton(player)
+    local character = player.Character
+    if not character then return end
+
+    -- remove old skeleton if exists
+    if Skeletons[player] then
+        for _, l in pairs(Skeletons[player]) do
+            l.line:Remove()
+        end
+        Skeletons[player] = nil
+    end
+
+    local joints
+    if character:FindFirstChild("Humanoid") then
+        if character:FindFirstChild("UpperTorso") then
+            joints = getR15Joints(character)
+        else
+            joints = getR6Joints(character)
+        end
+    else
+        return
+    end
+    
+    local lines = {}
+    
+    if joints.UpperTorso then -- R15
+        local connections = {
+            {joints.Head, joints.UpperTorso},
+            {joints.UpperTorso, joints.LowerTorso},
+            {joints.UpperTorso, joints.LeftUpperArm},
+            {joints.LeftUpperArm, joints.LeftLowerArm},
+            {joints.LeftLowerArm, joints.LeftHand},
+            {joints.UpperTorso, joints.RightUpperArm},
+            {joints.RightUpperArm, joints.RightLowerArm},
+            {joints.RightLowerArm, joints.RightHand},
+            {joints.LowerTorso, joints.LeftUpperLeg},
+            {joints.LeftUpperLeg, joints.LeftLowerLeg},
+            {joints.LeftLowerLeg, joints.LeftFoot},
+            {joints.LowerTorso, joints.RightUpperLeg},
+            {joints.RightUpperLeg, joints.RightLowerLeg},
+            {joints.RightLowerLeg, joints.RightFoot},
+        }
+        for _, pair in pairs(connections) do
+            local line = createLine()
+            line.From = Vector2.new(0,0)
+            line.To = Vector2.new(0,0)
+            table.insert(lines, {line=line, pair=pair})
+        end
+    else -- R6
+        local connections = {
+            {joints.Head, joints.Torso},
+            {joints.Torso, joints.LeftArm},
+            {joints.Torso, joints.RightArm},
+            {joints.Torso, joints.LeftLeg},
+            {joints.Torso, joints.RightLeg},
+        }
+        for _, pair in pairs(connections) do
+            local line = createLine()
+            line.From = Vector2.new(0,0)
+            line.To = Vector2.new(0,0)
+            table.insert(lines, {line=line, pair=pair})
+        end
+    end
+    
+    Skeletons[player] = lines
+end
+
+local function removeSkeleton(player)
+    if Skeletons[player] then
+        for _, l in pairs(Skeletons[player]) do
+            l.line:Remove()
+        end
+        Skeletons[player] = nil
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        createSkeleton(player)
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    removeSkeleton(player)
+end)
+
+-- initial load
+for _, player in pairs(Players:GetPlayers()) do
+    if player.Character then
+        createSkeleton(player)
+    end
+    player.CharacterAdded:Connect(function()
+        createSkeleton(player)
+    end)
+end
+
+-- refresh every 1 second to ensure skeleton exists
+spawn(function()
+    while true do
+        for _, player in pairs(Players:GetPlayers()) do
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                createSkeleton(player)
+            end
+        end
+        wait(1)
+    end
+end)
+
+-- update lines every frame
+RunService.RenderStepped:Connect(function()
+    local color = getColor()
+    for player, lines in pairs(Skeletons) do
+        local character = player.Character
+        if character then
+            for _, l in pairs(lines) do
+                local part1, part2 = l.pair[1], l.pair[2]
+                if part1 and part2 then
+                    local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
+                    local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
+                    l.line.Visible = onScreen1 and onScreen2
+                    l.line.From = Vector2.new(p1.X, p1.Y)
+                    l.line.To = Vector2.new(p2.X, p2.Y)
+                    l.line.Color = color
+                else
+                    l.line.Visible = false
+                end
+            end
+        end
     end
 end)
 
@@ -858,7 +1275,7 @@ local player = Players.LocalPlayer
 -- Colors
 local PLAYER_COLOR = Color3.fromRGB(200, 200, 200)
 local GUN_COLOR = Color3.fromRGB(200, 0, 0)
-local MAP_BRIGHTNESS = 0.2
+local MAP_BRIGHTNESS = 0.1
 
 -- Tools
 local REMOVE_TEXTURE_TOOLS = { "[Revolver]", "[DoubleBarrel]", "[TacticalShotgun]", "[Knife]" }
@@ -880,7 +1297,7 @@ local function applyColorCorrection()
     end
     cc.Brightness = 0.1
     cc.Contrast = 0.1
-    cc.Saturation = 0.5
+    cc.Saturation = 0.1
     cc.TintColor = Color3.fromRGB(170, 85, 255)
 end
 
